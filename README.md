@@ -8,4 +8,4 @@ Parts List:
 
 Schematic:
 
-![](http://i.imgur.com/5PL8t5l.png)
+![](http://i.imgur.com/7oPatYA.png)
