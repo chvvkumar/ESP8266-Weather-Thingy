@@ -8,5 +8,5 @@ Parts List:
 
 Schematic:
 
-![](http://i.imgur.com/7oPatYA.png)
+![](http://i.imgur.com/JbVnh2w.png?1)
 
