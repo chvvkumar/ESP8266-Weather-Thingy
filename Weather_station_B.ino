@@ -3,7 +3,7 @@
 #include <ESP8266WiFi.h>
 #include <Ticker.h>
 #include <JsonListener.h>
-#include "SSD1306.h"
+#include "SSD1306.h"      //header file from here: https://github.com/squix78/esp8266-oled-ssd1306
 #include "SSD1306Ui.h"
 #include "Wire.h"
 #include "WundergroundClient.h"
@@ -11,6 +11,8 @@
 #include "WeatherStationImages.h"
 #include "NTPClient.h"
 #include "DHT.h"
+#include "OneWire.h"      //ESP8266's OneWire library, NOT Arduino's
+#include <DallasTemperature.h>
 
 // Function prototypes
 bool drawFrame1(SSD1306 *, SSD1306UiState*, int, int); 
@@ -18,6 +20,7 @@ bool drawFrame2(SSD1306 *, SSD1306UiState*, int, int);
 bool drawFrame3(SSD1306 *, SSD1306UiState*, int, int); 
 bool drawFrame4(SSD1306 *, SSD1306UiState*, int, int); 
 bool drawFrame5(SSD1306 *, SSD1306UiState*, int, int); 
+bool drawFrame6(SSD1306 *, SSD1306UiState*, int, int); 
 
 
 /***************************
@@ -41,6 +44,11 @@ SSD1306Ui ui     ( &display );
 #define DHTPIN D2       // NodeMCU
 #define DHTTYPE DHT11   // DHT 22  (AM2302), AM2321
 
+//DS18B20 Settings
+#define ONE_WIRE_BUS D5
+OneWire oneWire(ONE_WIRE_BUS);
+DallasTemperature sensors(&oneWire);
+
 // Wunderground Settings
 const boolean IS_METRIC = true;
 const String WUNDERGRROUND_API_KEY = "---"; //Your Wunderground API Key
@@ -48,12 +56,12 @@ const String WUNDERGROUND_COUNTRY = "IL";
 const String WUNDERGROUND_CITY = "Peoria";
 
 // NTP settings
-#define UTC_OFFSET -21600 // UTC offset for Peoria is -8h
+#define UTC_OFFSET -21600 // UTC offset for Peoria is -6h
 
 /************************* Adafruit.io Setup *********************************/
 #define AIO_SERVER      "io.adafruit.com"
 #define AIO_SERVERPORT  1883
-#define AIO_USERNAME    "---"   //Adafruit IO Username
+#define AIO_USERNAME    "---"         //Adafruit IO Username
 #define AIO_KEY         "---------"   //Adafruit IO API Key
 /************ Global State (you don't need to change this!) ******************/
 // Create an ESP8266 WiFiClient class to connect to the MQTT server.
@@ -70,6 +78,8 @@ Adafruit_MQTT_Client mqtt(&client, MQTT_SERVER, AIO_SERVERPORT, MQTT_USERNAME, M
 // Notice MQTT paths for AIO follow the form: <username>/feeds/<feedname>
 const char Temperature_feed[] PROGMEM = AIO_USERNAME "/feeds/Temperature";
 Adafruit_MQTT_Publish Temperature = Adafruit_MQTT_Publish(&mqtt, Temperature_feed);
+const char Tempout_feed[] PROGMEM = AIO_USERNAME "/feeds/Tempout";
+Adafruit_MQTT_Publish Tempout = Adafruit_MQTT_Publish(&mqtt, Tempout_feed);
 const char Humidity_feed[] PROGMEM = AIO_USERNAME "/feeds/Humidity";
 Adafruit_MQTT_Publish Humidity = Adafruit_MQTT_Publish(&mqtt, Humidity_feed);
 
@@ -87,9 +97,22 @@ WundergroundClient wunderground(IS_METRIC);
 DHT dht(DHTPIN, DHTTYPE);
 float humidity = 0;
 float temperature = 0;
+float tempout = 0;
 uint32_t x=0;
 
-//MQTT Connection setup routine
+// this array keeps function pointers to all frames
+// frames are the single views that slide from right to left
+bool (*frames[])(SSD1306 *display, SSD1306UiState* state, int x, int y) = { drawFrame1, drawFrame2, /*drawFrame3,*/ drawFrame4, drawFrame5,drawFrame6 };
+int numberOfFrames = 5;
+
+// flag changed in the ticker function every 10 minutes
+bool readyForWeatherUpdate = false;
+
+String lastUpdate = "--";
+
+Ticker ticker;
+
+//MQQT Connection 
 void MQTT_connect() {
   int8_t ret;
   // Stop if already connected.
@@ -105,17 +128,16 @@ void MQTT_connect() {
   }
 //  Serial.println("MQTT Connected!");
 }
-// this array keeps function pointers to all frames
-// frames are the single views that slide from right to left
-bool (*frames[])(SSD1306 *display, SSD1306UiState* state, int x, int y) = { drawFrame1, drawFrame2, /*drawFrame3,*/ drawFrame4, drawFrame5 };
-int numberOfFrames = 4;
 
-// flag changed in the ticker function every 10 minutes
-bool readyForWeatherUpdate = false;
-
-String lastUpdate = "--";
-
-Ticker ticker;
+//OneWire Device Address
+void printAddress(DeviceAddress deviceAddress)
+{
+  for (uint8_t i = 0; i < 8; i++)
+  {
+    if (deviceAddress[i] < 16) Serial.print("0");
+    Serial.print(deviceAddress[i], HEX);
+  }
+}
 
 void drawForecast(SSD1306 *display, int x, int y, int dayIndex) {
   display->setTextAlignment(TEXT_ALIGN_CENTER);
@@ -163,20 +185,6 @@ bool drawFrame2(SSD1306 *display, SSD1306UiState* state, int x, int y) {
   display->drawString(32 + x - weatherIconWidth / 2, 12 + y, weatherIcon);
 }
 
-// // Humidity Pressure and Precipitation
-// bool drawFrame3(SSD1306 *display, SSD1306UiState* state, int x, int y) {
-//   display->setTextAlignment(TEXT_ALIGN_CENTER);
-//   display->setFont(ArialMT_Plain_10);
-//   display->drawString(32 + x, 0 + y, "Humidity");
-//   display->drawString(96 + x, 0 + y, "Pressure");
-//   display->drawString(32 + x, 28 + y, "Precipit.");
-
-//   display->setFont(ArialMT_Plain_16);
-//   display->drawString(32 + x, 10 + y, wunderground.getHumidity());
-//   display->drawString(96 + x, 10 + y, wunderground.getPressure());
-//   display->drawString(32 + x, 38 + y, wunderground.getPrecipitationToday());
-// }
-
 
 // Icons for today, tomorrow and day after
 bool drawFrame4(SSD1306 *display, SSD1306UiState* state, int x, int y) {
@@ -188,7 +196,7 @@ bool drawFrame4(SSD1306 *display, SSD1306UiState* state, int x, int y) {
 // Indoor temperature and humidity
 bool drawFrame5(SSD1306 *display, SSD1306UiState* state, int x, int y) {
   display->setTextAlignment(TEXT_ALIGN_CENTER);
-  display->setFont(ArialMT_Plain_10);
+  display->setFont(ArialMT_Plain_16);
   display->drawString(64 + x, 0 + y, "Inside");
   display->setFont(ArialMT_Plain_24);
   display->drawString(74 + x, 12 + y, "  " + String(temperature) + "°C");
@@ -202,6 +210,16 @@ bool drawFrame5(SSD1306 *display, SSD1306UiState* state, int x, int y) {
   display->drawString(10 +x, 35 + y, "R");
 
 }
+
+// Outside Temperature
+bool drawFrame6(SSD1306 *display, SSD1306UiState* state, int x, int y) {
+  display->setTextAlignment(TEXT_ALIGN_CENTER);
+  display->setFont(ArialMT_Plain_16);
+  display->drawString(64 + x, 0 + y, "Outside Sensor");
+  display->setFont(Roboto_Plain_38);
+  display->drawString(48 + x, 12 + y, "  " + String(tempout) + "°C");
+}
+
 
 // Progress bar when updating
 void drawProgress(SSD1306 *display, int percentage, String label) {
@@ -219,30 +237,62 @@ void updateData(SSD1306 *display) {
   display->flipScreenVertically();
   drawProgress(display, 10, "Updating time...");
   timeClient.begin();
-  drawProgress(display, 20, "Updating time...");
-  drawProgress(display, 30, "Updating conditions...");
+ // drawProgress(display, 20, "Updating time...");
+  drawProgress(display, 20, "Updating conditions...");
   wunderground.updateConditions(WUNDERGRROUND_API_KEY, WUNDERGROUND_COUNTRY, WUNDERGROUND_CITY);
-  drawProgress(display, 40, "Updating conditions...");
-  drawProgress(display, 50, "Updating forecasts...");
+  drawProgress(display, 30, "Updating conditions...");
+  drawProgress(display, 40, "Updating forecasts...");
   wunderground.updateForecast(WUNDERGRROUND_API_KEY, WUNDERGROUND_COUNTRY, WUNDERGROUND_CITY);
-  drawProgress(display, 60, "Updating forecasts...");
-  drawProgress(display, 70, "Updating local temperature and humidity");
+  drawProgress(display, 50, "Updating forecasts...");
+  drawProgress(display, 60, "Updating local temperature and humidity");
   humidity = dht.readHumidity();
-  delay(200);
-  drawProgress(display, 80, "Updating local temperature and humidity");
+  delay(500);
+  drawProgress(display, 70, "Updating local temperature and humidity");
   temperature = dht.readTemperature();
-  delay(200);
-  drawProgress(display, 90, "Updating local temperature and humidity");
+  delay(500);
   lastUpdate = timeClient.getFormattedTime();
   Serial.println(lastUpdate);
   MQTT_connect();
-  delay(200);
+  delay(500);
   Temperature.publish(temperature);
   Humidity.publish(humidity);
   Serial.print(temperature);
   Serial.print("...");
   Serial.println(humidity);
   delay(200);
+  drawProgress(display, 80, "Updating outside temperature...");
+  // Begin DS18B20 aquisition 
+  int numberOfDevices; // Number of temperature devices found
+  DeviceAddress tempDeviceAddress; // We'll use this variable to store a found device address    
+  // For testing purposes, reset the bus every loop so we can see if any devices appear or fall off
+  sensors.begin();
+  // Grab a count of devices on the wire
+  numberOfDevices = sensors.getDeviceCount();
+  Serial.print(" Parasite:"); 
+  if (sensors.isParasitePowerMode()) Serial.print("ON ");
+  else Serial.print("OFF ");
+  Serial.print("Count:");
+  Serial.print(numberOfDevices, DEC);
+ // report parasite power requirements
+  sensors.requestTemperatures(); // Send the command to get temperatures 
+ // Loop through each device, print out temperature data
+  for(int i=0;i<numberOfDevices; i++)
+  {
+    // Search the wire for address
+    if(sensors.getAddress(tempDeviceAddress, i))
+  {
+    // Output the device ID
+    Serial.print(" #");
+    Serial.print(i,DEC);
+    Serial.print("=");
+    float tempC = sensors.getTempC(tempDeviceAddress);
+    Serial.print(tempC); // Converts tempC to Fahrenheit
+    Tempout.publish(tempC);
+    tempout = tempC;
+  } 
+  //else ghost device! Check your power requirements and cabling 
+  }
+ Serial.println("");
   drawProgress(display, 100, "Done...");
   readyForWeatherUpdate = false;
   delay(200);
@@ -252,8 +302,6 @@ void setReadyForWeatherUpdate() {
   Serial.println("Setting readyForUpdate to true");
   readyForWeatherUpdate = true;
 }
-
-
 
 void setup() {
   Serial.begin(115200);
@@ -338,7 +386,3 @@ void loop() {
   }
 
 }
-
-
-
-
