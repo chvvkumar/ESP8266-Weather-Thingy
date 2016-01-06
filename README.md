@@ -9,5 +9,5 @@ Parts List:
 
 Circuit:
 
-![](http://i.imgur.com/gTseM1g.png)
+![](http://i.imgur.com/UMCIsZN.png)
 
