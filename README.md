@@ -11,3 +11,8 @@ Circuit:
 
 ![](http://i.imgur.com/UMCIsZN.png)
 
+Photographs:
+
+![](https://i.imgur.com/ejOHLyW.jpg)
+![](https://i.imgur.com/XUUmpCu.jpg)
+![](https://i.imgur.com/8HbzT2o.jpg)
